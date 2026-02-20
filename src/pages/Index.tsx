@@ -1,14 +1,15 @@
-import { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useState, useRef } from "react";
+import { motion } from "framer-motion";
 import { Sparkles, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { EmotionAnalysis, EmotionFingerprint, EMOTION_COLORS, EMOTION_GRADIENT, getBPM } from "@/lib/emotionMusicMapping";
+import { EmotionAnalysis, EmotionFingerprint, EMOTION_GRADIENT, getBPM } from "@/lib/emotionMusicMapping";
 import ParticleBackground from "@/components/ParticleBackground";
 import EmotionalOrb from "@/components/EmotionalOrb";
 import EmotionVisualization from "@/components/EmotionVisualization";
 import EmotionRadarChart from "@/components/EmotionRadarChart";
 import MelodyControls from "@/components/MelodyControls";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/hooks/use-toast";
 
 const EMOTION_HUES: Record<string, number> = {
   joy: 50, sadness: 220, anger: 0, fear: 270, love: 340, hope: 160,
@@ -20,6 +21,8 @@ const Index = () => {
   const [analysis, setAnalysis] = useState<EmotionAnalysis | null>(null);
   const [fingerprint, setFingerprint] = useState<EmotionFingerprint | null>(null);
   const [emotionHue, setEmotionHue] = useState(185);
+  const resultsRef = useRef<HTMLDivElement>(null);
+  const { toast } = useToast();
 
   const handleAnalyze = async () => {
     if (!text.trim()) return;
@@ -32,30 +35,63 @@ const Index = () => {
         body: { text },
       });
 
-      if (error) throw error;
+      console.log("Edge function response:", { data, error });
+
+      if (error) {
+        console.error("Supabase function error:", error);
+        toast({ title: "Error", description: "Failed to analyze emotions. Please try again.", variant: "destructive" });
+        return;
+      }
+
+      // Handle case where data might be a string
+      let parsed = data;
+      if (typeof data === "string") {
+        try {
+          parsed = JSON.parse(data);
+        } catch {
+          console.error("Failed to parse response string:", data);
+          toast({ title: "Error", description: "Invalid response from AI. Please try again.", variant: "destructive" });
+          return;
+        }
+      }
+
+      if (!parsed || !parsed.primary_emotion) {
+        console.error("Invalid data structure:", parsed);
+        toast({ title: "Error", description: "Unexpected response format. Please try again.", variant: "destructive" });
+        return;
+      }
 
       const result: EmotionAnalysis = {
-        primary_emotion: data.primary_emotion,
-        secondary_emotion: data.secondary_emotion,
-        intensity: data.intensity,
-        temperature: data.temperature,
-        movement: data.movement,
+        primary_emotion: parsed.primary_emotion,
+        secondary_emotion: parsed.secondary_emotion,
+        intensity: parsed.intensity,
+        temperature: parsed.temperature,
+        movement: parsed.movement,
       };
 
-      const fp: EmotionFingerprint = data.fingerprint || {
-        joy: data.primary_emotion === "joy" ? result.intensity * 10 : 15,
-        sadness: data.primary_emotion === "sadness" ? result.intensity * 10 : 15,
-        anger: data.primary_emotion === "anger" ? result.intensity * 10 : 15,
-        fear: data.primary_emotion === "fear" ? result.intensity * 10 : 15,
-        love: data.primary_emotion === "love" ? result.intensity * 10 : 15,
-        hope: data.primary_emotion === "hope" ? result.intensity * 10 : 15,
+      const fp: EmotionFingerprint = parsed.fingerprint || {
+        joy: parsed.primary_emotion === "joy" ? result.intensity * 10 : 15,
+        sadness: parsed.primary_emotion === "sadness" ? result.intensity * 10 : 15,
+        anger: parsed.primary_emotion === "anger" ? result.intensity * 10 : 15,
+        fear: parsed.primary_emotion === "fear" ? result.intensity * 10 : 15,
+        love: parsed.primary_emotion === "love" ? result.intensity * 10 : 15,
+        hope: parsed.primary_emotion === "hope" ? result.intensity * 10 : 15,
       };
+
+      console.log("Setting analysis:", result);
+      console.log("Setting fingerprint:", fp);
 
       setAnalysis(result);
       setFingerprint(fp);
       setEmotionHue(EMOTION_HUES[result.primary_emotion.toLowerCase()] || 185);
+
+      // Auto-scroll to results
+      setTimeout(() => {
+        resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 300);
     } catch (e) {
       console.error("Analysis error:", e);
+      toast({ title: "Error", description: "Something went wrong. Please try again.", variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -150,29 +186,27 @@ const Index = () => {
         </section>
 
         {/* Results Section */}
-        <AnimatePresence>
-          {analysis && fingerprint && (
-            <motion.section
-              className="px-4 pb-20 max-w-5xl mx-auto space-y-8"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.5 }}
-            >
-              {/* Emotional Orb */}
-              <EmotionalOrb bpm={bpm} primaryColor={c1} secondaryColor={c2} />
+        {analysis && fingerprint && (
+          <motion.section
+            ref={resultsRef}
+            className="px-4 pb-20 max-w-5xl mx-auto space-y-8"
+            initial={{ opacity: 0, y: 30 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6 }}
+          >
+            {/* Emotional Orb */}
+            <EmotionalOrb bpm={bpm} primaryColor={c1} secondaryColor={c2} />
 
-              {/* Emotion Data */}
-              <EmotionVisualization analysis={analysis} />
+            {/* Emotion Data */}
+            <EmotionVisualization analysis={analysis} />
 
-              {/* Melody + Radar */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <MelodyControls analysis={analysis} />
-                <EmotionRadarChart fingerprint={fingerprint} />
-              </div>
-            </motion.section>
-          )}
-        </AnimatePresence>
+            {/* Melody + Radar */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <MelodyControls analysis={analysis} />
+              <EmotionRadarChart fingerprint={fingerprint} />
+            </div>
+          </motion.section>
+        )}
       </div>
     </div>
   );
